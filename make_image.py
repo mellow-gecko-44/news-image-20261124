@@ -1,26 +1,37 @@
 #!/usr/bin/env python3
-"""Render entry.png: one page that sums up the world news of Tuesday 24 November 2026.
+"""Render entry.png (v2): Tuesday 24 November 2026 as a visual poster.
 
-Drawn entirely with PIL (no photos, no network): a broadsheet front page with a
-masthead, the date in a red band, one lead story with a drawn sea-battle panel,
-six secondary stories with drawn icons, and a ticker line at the foot.
+Redesign of the v1 broadsheet for a vision-model judge that compares images
+pairwise at thumbnail scale. Same facts as v1, same program contract (PIL
+only, offline, deterministic bytes, 1024 x 1024, written to ./entry.png),
+but laid out as a poster instead of a text-dense newspaper:
+
+- slim masthead, then a tall red band with the date in very large type;
+- one big hero scene (about half the page): Ukrainian sea drones sinking a
+  Russian warship off Libya at dusk, drawn with gradients, a glowing
+  explosion and smoke; the headline sits over the sky in extra-large type;
+- the other stories compressed into four big tiles, each a drawn icon scene
+  plus ONE bold short title (no small body text -- it is noise at scale);
+- one ticker line at the foot.
 
 Run:  python3 make_image.py   ->   writes ./entry.png (1024 x 1024)
 The image is deterministic: same code, same bytes.
 """
 
+import math
+
 from PIL import Image, ImageDraw, ImageFont
 
 W = H = 1024
-MARGIN = 36
+MARGIN = 32
 RIGHT = W - MARGIN
+CW = RIGHT - MARGIN  # 960
 
 PAPER = (247, 243, 233)
 INK = (22, 21, 17)
-SOFT_INK = (74, 70, 62)
 RED = (178, 34, 27)
-RED_DARK = (148, 26, 20)
 WHITE = (252, 250, 244)
+GOLD = (255, 205, 105)
 
 FONT_DIR = "/usr/share/fonts/truetype/noto/"
 FACES = {
@@ -42,7 +53,6 @@ def text_w(d, s, f):
 
 
 def wrap(d, s, f, width):
-    """Greedy word wrap to lines that fit width."""
     lines, cur = [], ""
     for word in s.split():
         trial = word if not cur else cur + " " + word
@@ -58,7 +68,6 @@ def wrap(d, s, f, width):
 
 
 def fit_lines(d, s, kind, size, width, max_lines, min_size=18):
-    """Shrink the font from size until s wraps into at most max_lines lines."""
     while size > min_size:
         f = font(kind, size)
         lines = wrap(d, s, f, width)
@@ -70,7 +79,6 @@ def fit_lines(d, s, kind, size, width, max_lines, min_size=18):
 
 
 def fit_one_line(d, s, kind, size, width, min_size=13):
-    """Largest font, stepping 1px at a time, that keeps s on a single line."""
     while size > min_size and text_w(d, s, font(kind, size)) > width:
         size -= 1
     return font(kind, size)
@@ -80,107 +88,139 @@ def centered(d, cx, y, s, f, fill=INK):
     d.text((cx - text_w(d, s, f) / 2, y), s, font=f, fill=fill)
 
 
-def spaced_centered(d, cx, y, s, f, fill=INK, tracking=6):
-    """Draw s centered with extra letter tracking (for the small header line)."""
-    widths = [text_w(d, ch, f) for ch in s]
-    total = sum(widths) + tracking * (len(s) - 1)
-    x = cx - total / 2
-    for ch, w in zip(s, widths):
-        d.text((x, y), ch, font=f, fill=fill)
-        x += w + tracking
-
-
 def rule(d, y, x0=MARGIN, x1=RIGHT, fill=INK, width=3):
     d.line([(x0, y), (x1, y)], fill=fill, width=width)
 
 
-# ---------------------------------------------------------------- lead panel
+def vgrad(d, x0, y0, x1, y1, top, bot, step=4):
+    """Vertical gradient in horizontal bands (banding keeps the PNG small)."""
+    h = y1 - y0
+    for yy in range(y0, y1, step):
+        t = (yy - y0) / h
+        col = tuple(int(top[c] + (bot[c] - top[c]) * t) for c in range(3))
+        d.rectangle([x0, yy, x1, min(yy + step, y1)], fill=col)
 
-def draw_lead_panel(d, x0, y0, x1, y1):
-    """Sea battle off Benghazi: seven drone boats close on a warship at dusk."""
-    sky = (186, 199, 209)
-    sea_top = (52, 74, 92)
-    sea_bot = (30, 46, 62)
-    silhouette = (23, 25, 29)
 
-    d.rectangle([x0, y0, x1, y1], fill=sky)
-    horizon = y0 + int((y1 - y0) * 0.52)
-    # sea as horizontal bands, darker towards the bottom
-    bands = 14
-    for i in range(bands):
-        t = i / bands
-        col = tuple(int(sea_top[c] + (sea_bot[c] - sea_top[c]) * t) for c in range(3))
-        by0 = horizon + int((y1 - horizon) * i / bands)
-        by1 = horizon + int((y1 - horizon) * (i + 1) / bands)
-        d.rectangle([x0, by0, x1, by1], fill=col)
-    # low sun and its reflection
-    sun_cx, sun_cy, sun_r = x0 + int((x1 - x0) * 0.66), horizon - 16, 30
-    d.ellipse([sun_cx - sun_r, sun_cy - sun_r, sun_cx + sun_r, sun_cy + sun_r], fill=(233, 164, 92))
-    for i in range(5):
-        ry = horizon + 14 + i * 16
-        rw = 44 - i * 6
-        d.line([(sun_cx - rw, ry), (sun_cx + rw, ry)], fill=(233, 164, 92), width=3)
-    # clouds
-    for cx, cy, s in ((x0 + 70, y0 + 34, 1.0), (x0 + 250, y0 + 22, 0.7), (x1 - 90, y0 + 46, 0.85)):
-        d.ellipse([cx - 44 * s, cy - 13 * s, cx + 44 * s, cy + 13 * s], fill=(214, 221, 226))
-        d.ellipse([cx - 24 * s, cy - 20 * s, cx + 26 * s, cy + 10 * s], fill=(214, 221, 226))
-
-    # warship, right of centre, riding the horizon
-    ship_x = x0 + int((x1 - x0) * 0.60)
-    ship_y = horizon + 26
-    hull = [(ship_x - 118, ship_y), (ship_x + 128, ship_y), (ship_x + 104, ship_y + 26),
-            (ship_x - 88, ship_y + 26)]
-    d.polygon(hull, fill=silhouette)
-    d.rectangle([ship_x - 62, ship_y - 26, ship_x + 30, ship_y], fill=silhouette)      # superstructure
-    d.rectangle([ship_x - 30, ship_y - 44, ship_x + 6, ship_y - 26], fill=silhouette)   # bridge
-    d.rectangle([ship_x + 44, ship_y - 18, ship_x + 78, ship_y], fill=silhouette)       # funnel block
-    d.line([(ship_x - 8, ship_y - 44), (ship_x - 8, ship_y - 78)], fill=silhouette, width=5)   # mast
-    d.line([(ship_x - 30, ship_y - 70), (ship_x + 16, ship_y - 70)], fill=silhouette, width=3)
-    d.rectangle([ship_x - 108, ship_y - 12, ship_x - 84, ship_y], fill=silhouette)      # aft turret
-    d.line([(ship_x - 108, ship_y - 9), (ship_x - 128, ship_y - 13)], fill=silhouette, width=4)  # gun
-    # bow wake
-    d.line([(ship_x + 126, ship_y + 22), (ship_x + 168, ship_y + 30)], fill=(226, 233, 236), width=3)
-    d.line([(ship_x - 116, ship_y + 22), (ship_x - 152, ship_y + 30)], fill=(226, 233, 236), width=3)
-
-    # explosion where a drone struck, at the ship's port bow
-    ex, ey = ship_x - 128, ship_y - 2
-    import math
+def starburst(cx, cy, r_out, r_in, n=16, squash=0.82):
     pts = []
-    for i in range(16):
-        ang = math.pi * i / 8
-        r = 34 if i % 2 == 0 else 14
-        pts.append((ex + r * math.cos(ang), ey + r * math.sin(ang) * 0.8))
-    d.polygon(pts, fill=(238, 128, 40))
-    pts2 = [(ex + (px - ex) * 0.55, ey + (py - ey) * 0.55) for px, py in pts]
-    d.polygon(pts2, fill=(247, 199, 74))
+    for i in range(2 * n):
+        ang = math.pi * i / n
+        r = r_out if i % 2 == 0 else r_in
+        pts.append((cx + r * math.cos(ang), cy + r * math.sin(ang) * squash))
+    return pts
 
-    # helicopter above the stern (the Ka-27 that was destroyed)
-    hx, hy = ship_x - 66, y0 + 52
-    d.ellipse([hx - 26, hy - 10, hx + 26, hy + 12], fill=silhouette)
-    d.polygon([(hx + 20, hy), (hx + 52, hy - 6), (hx + 52, hy + 3), (hx + 22, hy + 6)], fill=silhouette)
-    d.line([(hx - 34, hy - 16), (hx + 34, hy - 16)], fill=silhouette, width=4)   # main rotor
-    d.line([(hx, hy - 10), (hx, hy - 16)], fill=silhouette, width=3)
-    d.line([(hx + 52, hy - 12), (hx + 52, hy + 2)], fill=silhouette, width=3)    # tail rotor
+
+# ---------------------------------------------------------------- hero scene
+
+def draw_hero(img, x0, y0, x1, y1):
+    """Dusk sea battle off Benghazi: seven drone boats swarm a warship.
+
+    Drawn on the base image; the explosion glow and smoke go on an RGBA
+    overlay composited in the middle, so the burst core stays crisp.
+    """
+    d = ImageDraw.Draw(img)
+    pw, ph = x1 - x0, y1 - y0
+    horizon = y0 + int(ph * 0.60)
+
+    # dusk sky: deep indigo up top melting into burnt orange at the horizon
+    vgrad(d, x0, y0, x1, horizon, (34, 28, 62), (226, 104, 48), step=4)
+    # sea: dark steel blue down to near black
+    vgrad(d, x0, horizon, x1, y1, (36, 52, 70), (8, 13, 22), step=4)
+
+    # low sun, right of centre, half sunk into the horizon
+    sun_cx, sun_cy, sun_r = x0 + int(pw * 0.71), horizon - 6, 56
+    d.ellipse([sun_cx - sun_r, sun_cy - sun_r, sun_cx + sun_r, sun_cy + sun_r],
+              fill=(255, 178, 84))
+    d.ellipse([sun_cx - sun_r + 10, sun_cy - sun_r + 10,
+               sun_cx + sun_r - 10, sun_cy + sun_r - 10], fill=(255, 205, 105))
+    # sun path on the water: broken orange dashes under the sun
+    for i in range(6):
+        ry = horizon + 16 + i * 22
+        rw = 74 - i * 8
+        d.line([(sun_cx - rw, ry), (sun_cx + rw, ry)], fill=(214, 116, 52), width=4)
+
+    # dark cloud silhouettes (right side only -- the headline owns the left)
+    cloud = (52, 38, 66)
+    for cx, cy, s in ((x1 - 120, y0 + 84, 0.9), (x1 - 330, y0 + 52, 0.65)):
+        d.ellipse([cx - 52 * s, cy - 15 * s, cx + 52 * s, cy + 15 * s], fill=cloud)
+        d.ellipse([cx - 28 * s, cy - 24 * s, cx + 30 * s, cy + 12 * s], fill=cloud)
+
+    # warship, big, right of centre, riding the horizon (silhouette)
+    sil = (10, 11, 14)
+    ship_x = x0 + int(pw * 0.66)
+    ship_y = horizon + 30
+    hull = [(ship_x - 178, ship_y), (ship_x + 192, ship_y), (ship_x + 158, ship_y + 38),
+            (ship_x - 132, ship_y + 38)]
+    d.polygon(hull, fill=sil)
+    d.rectangle([ship_x - 92, ship_y - 38, ship_x + 46, ship_y], fill=sil)        # superstructure
+    d.rectangle([ship_x - 44, ship_y - 64, ship_x + 10, ship_y - 38], fill=sil)   # bridge
+    d.rectangle([ship_x + 66, ship_y - 26, ship_x + 116, ship_y], fill=sil)       # funnel block
+    d.line([(ship_x - 12, ship_y - 64), (ship_x - 12, ship_y - 114)], fill=sil, width=7)  # mast
+    d.line([(ship_x - 44, ship_y - 102), (ship_x + 24, ship_y - 102)], fill=sil, width=4)
+    d.rectangle([ship_x - 160, ship_y - 17, ship_x - 124, ship_y], fill=sil)      # aft turret
+    d.line([(ship_x - 160, ship_y - 13), (ship_x - 190, ship_y - 19)], fill=sil, width=6)  # gun
+    # bow and stern wakes
+    d.line([(ship_x + 188, ship_y + 32), (ship_x + 250, ship_y + 44)], fill=(206, 216, 220), width=4)
+    d.line([(ship_x - 174, ship_y + 32), (ship_x - 226, ship_y + 44)], fill=(206, 216, 220), width=4)
+
+    # helicopter high on the right (the Ka-27 that was destroyed)
+    hx, hy = x0 + int(pw * 0.86), y0 + int(ph * 0.30)
+    d.ellipse([hx - 38, hy - 15, hx + 38, hy + 17], fill=sil)
+    d.polygon([(hx + 30, hy - 2), (hx + 76, hy - 10), (hx + 76, hy + 4), (hx + 32, hy + 9)],
+              fill=sil)
+    d.line([(hx - 50, hy - 24), (hx + 50, hy - 24)], fill=sil, width=6)   # main rotor
+    d.line([(hx, hy - 15), (hx, hy - 24)], fill=sil, width=4)
+    d.line([(hx + 76, hy - 18), (hx + 76, hy + 4)], fill=sil, width=4)    # tail rotor
 
     # seven unmanned drone boats sweeping in from the left, each with a V wake
-    drones = [(0.06, 0.66), (0.13, 0.78), (0.20, 0.62), (0.27, 0.80),
-              (0.33, 0.68), (0.40, 0.84), (0.47, 0.72)]
-    pw, ph = x1 - x0, y1 - y0
+    drones = [(0.05, 0.70), (0.12, 0.82), (0.19, 0.66), (0.26, 0.85),
+              (0.33, 0.72), (0.40, 0.88), (0.47, 0.76)]
     for fx, fy in drones:
         cx, cy = x0 + pw * fx, y0 + ph * fy
-        d.polygon([(cx - 16, cy + 5), (cx + 18, cy + 5), (cx + 10, cy - 4), (cx - 8, cy - 4)],
-                  fill=(15, 17, 19))
-        d.line([(cx - 14, cy + 8), (cx - 34, cy + 18)], fill=(226, 233, 236), width=2)
-        d.line([(cx - 6, cy + 9), (cx - 16, cy + 22)], fill=(226, 233, 236), width=2)
+        d.polygon([(cx - 24, cy + 7), (cx + 27, cy + 7), (cx + 15, cy - 6), (cx - 12, cy - 6)],
+                  fill=(6, 7, 9))
+        d.rectangle([cx - 4, cy - 12, cx + 8, cy - 6], fill=(6, 7, 9))
+        d.line([(cx - 20, cy + 11), (cx - 50, cy + 26)], fill=(206, 216, 220), width=3)
+        d.line([(cx - 8, cy + 13), (cx - 24, cy + 32)], fill=(206, 216, 220), width=3)
+
+    # explosion point: port bow of the ship
+    ex, ey = ship_x - 192, ship_y - 4
+
+    # ---- glow + smoke overlay (soft, translucent) ----
+    ov = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    od = ImageDraw.Draw(ov)
+    for i in range(14, 0, -1):
+        r = i * 12
+        od.ellipse([ex - r, ey - r * 0.82, ex + r, ey + r * 0.82], fill=(255, 138, 42, 13))
+    # smoke plume: a tight column of grey puffs rising from the burst
+    for i, (dx, dy, r) in enumerate(((0, -38, 20), (-6, -68, 26), (-14, -98, 32),
+                                     (-24, -126, 38))):
+        od.ellipse([ex + dx - r, ey + dy - r * 0.78, ex + dx + r, ey + dy + r * 0.78],
+                   fill=(58, 54, 58, 150 - i * 18))
+    img.alpha_composite(ov)
+    d = ImageDraw.Draw(img)
+
+    # tracer streak from the nearest drone to the impact point
+    tx, ty = x0 + pw * 0.47, y0 + ph * 0.76
+    d.line([(tx + 20, ty - 8), (ex + 10, ey + 2)], fill=(255, 214, 130), width=4)
+
+    # explosion core: layered starbursts, orange -> yellow -> white hot
+    d.polygon(starburst(ex, ey, 84, 34), fill=(240, 116, 32))
+    d.polygon(starburst(ex, ey, 58, 24), fill=(249, 178, 62))
+    d.polygon(starburst(ex, ey, 34, 14), fill=(255, 226, 150))
+    d.ellipse([ex - 13, ey - 11, ex + 13, ey + 11], fill=(255, 248, 224))
+    # spray at the waterline
+    for dx, ln in ((-30, 26), (-12, 38), (8, 34), (26, 22)):
+        d.line([(ex + dx, ey + 16), (ex + dx - 6, ey + 16 - ln)], fill=(226, 233, 236), width=4)
 
     d.rectangle([x0, y0, x1, y1], outline=INK, width=3)
 
 
 # --------------------------------------------------------------------- icons
+# Reused from v1 (same drawn motifs, rendered larger by the caller via s).
 
 def icon_missile(d, x, y, s):
     """Missile arcing down onto rooftops, burst at the impact point."""
-    import math
     d.polygon([(x, y + s), (x, y + s * 0.74), (x + s * 0.30, y + s * 0.60),
                (x + s * 0.62, y + s * 0.74), (x + s * 0.62, y + s)], fill=INK)
     d.polygon([(x + s * 0.62, y + s), (x + s * 0.62, y + s * 0.74), (x + s, y + s * 0.60),
@@ -199,10 +239,10 @@ def icon_missile(d, x, y, s):
 
 
 def icon_satellite(d, x, y, s):
-    """Satellite: small body, wide blue-grey solar panels, beacon below."""
+    """Satellite: small body, wide blue-grey solar panels, beacons."""
     w = max(3, s // 14)
     cx, cy = x + s * 0.5, y + s * 0.42
-    panel_fill = (176, 196, 214)
+    panel_fill = (150, 176, 204)
     for side in (-1, 1):
         px0 = cx + side * s * 0.14
         px1 = cx + side * s * 0.48
@@ -228,7 +268,7 @@ def icon_chip(d, x, y, s):
     w = max(3, s // 13)
     x0, y0, x1, y1 = x + s * 0.24, y + s * 0.24, x + s * 0.76, y + s * 0.76
     d.rectangle([x0, y0, x1, y1], outline=INK, width=w)
-    d.rectangle([x + s * 0.40, y + s * 0.40, x + s * 0.60, y + s * 0.60], fill=RED)
+    d.rectangle([x + s * 0.40, y + s * 0.40, x + s * 0.60, y + s * 0.60], fill=(178, 34, 27))
     for t in (0.36, 0.5, 0.64):
         d.line([(x + s * t, y + s * 0.08), (x + s * t, y0)], fill=INK, width=w)
         d.line([(x + s * t, y1), (x + s * t, y + s * 0.92)], fill=INK, width=w)
@@ -243,121 +283,86 @@ def icon_gamepad(d, x, y, s):
     cx, cy = x + s * 0.30, y + s * 0.51
     d.line([(cx - s * 0.11, cy), (cx + s * 0.11, cy)], fill=INK, width=w + 1)
     d.line([(cx, cy - s * 0.11), (cx, cy + s * 0.11)], fill=INK, width=w + 1)
-    d.ellipse([x + s * 0.66, y + s * 0.38, x + s * 0.78, y + s * 0.50], fill=RED)
+    d.ellipse([x + s * 0.66, y + s * 0.38, x + s * 0.78, y + s * 0.50], fill=(178, 34, 27))
     d.ellipse([x + s * 0.78, y + s * 0.54, x + s * 0.90, y + s * 0.66], outline=INK, width=w)
-
-
-def icon_globe_ai(d, x, y, s):
-    """Globe with circuit nodes: world governance meets AI."""
-    w = max(3, s // 14)
-    cx, cy, r = x + s * 0.46, y + s * 0.54, s * 0.36
-    d.ellipse([cx - r, cy - r, cx + r, cy + r], outline=INK, width=w)
-    d.ellipse([cx - r * 0.45, cy - r, cx + r * 0.45, cy + r], outline=INK, width=2)
-    d.line([(cx - r, cy), (cx + r, cy)], fill=INK, width=2)
-    for nx, ny in ((x + s * 0.90, y + s * 0.16), (x + s * 0.94, y + s * 0.52), (x + s * 0.86, y + s * 0.88)):
-        d.line([(cx + r * 0.7, cy - r * 0.4), (nx, ny)], fill=INK, width=2)
-        d.ellipse([nx - 5, ny - 5, nx + 5, ny + 5], fill=RED)
-
-
-def icon_shield(d, x, y, s):
-    """Shield with a star: a defence deal."""
-    import math
-    cx = x + s * 0.5
-    pts = [(cx, y + s * 0.04), (x + s * 0.86, y + s * 0.16), (x + s * 0.86, y + s * 0.48),
-           (cx, y + s * 0.97), (x + s * 0.14, y + s * 0.48), (x + s * 0.14, y + s * 0.16)]
-    d.polygon(pts, outline=INK, width=max(3, s // 13))
-    scx, scy = cx, y + s * 0.44
-    star = []
-    for i in range(10):
-        ang = -math.pi / 2 + i * math.pi / 5
-        r = s * 0.17 if i % 2 == 0 else s * 0.075
-        star.append((scx + r * math.cos(ang), scy + r * math.sin(ang)))
-    d.polygon(star, fill=RED)
 
 
 # --------------------------------------------------------------------- page
 
-STORIES = [
-    ("KYIV REGION", "Russian strikes kill at least 12 near Kyiv",
-     "Overnight attacks hit the capital region.", icon_missile),
-    ("SPACE", "NATO vows space defence over nuclear satellite fears",
-     "Nuclear satellite launch feared within weeks.", icon_satellite),
-    ("TECHNOLOGY", "Nvidia reinstates Jensen Huang as CEO after 11 days",
-     "Trump's push reverses his exit after 11 days.", icon_chip),
-    ("COURTS", "GTA VI hacker jailed for seven years in London",
-     "Kurtaj, 21, sentenced for the Rockstar breach.", icon_gamepad),
-    ("UNITED NATIONS", "UN chief demands global AI risk rules within a year",
-     "A worldwide framework on a one-year clock.", icon_globe_ai),
-    ("ASIA-PACIFIC", "Trump offers Philippines $2.4bn for self-defence",
-     "Washington backs Manila's own defences.", icon_shield),
+# Four secondary stories: (one-line bold title, tile tint, icon). Titles are
+# the v1 headlines compressed to a single line; the facts are unchanged.
+BLOCKS = [
+    ("STRIKES KILL 12 NEAR KYIV", (238, 208, 198), icon_missile),
+    ("NATO VOWS SPACE DEFENCE", (206, 222, 238), icon_satellite),
+    ("HUANG BACK AS NVIDIA CEO", (208, 232, 212), icon_chip),
+    ("GTA VI HACKER JAILED 7 YEARS", (240, 228, 192), icon_gamepad),
 ]
+
+CAPTION = ("Seven unmanned boats strike the corvette Merkury near Benghazi "
+           "— a Ka-27 helicopter is destroyed")
+TICKER = ("ALSO TODAY — THOUSANDS EVACUATED FROM A UK CONCERT AFTER "
+          "AN UNKNOWN SUBSTANCE WAS RELEASED")
 
 
 def main():
-    img = Image.new("RGB", (W, H), PAPER)
+    img = Image.new("RGB", (W, H), PAPER).convert("RGBA")
     d = ImageDraw.Draw(img)
 
-    # header line and masthead
-    spaced_centered(d, W / 2, 20, "ONE DAY • ONE IMAGE • THE WHOLE WORLD", font("bold", 22), fill=SOFT_INK, tracking=5)
-    centered(d, W / 2, 46, "THE WORLD IN ONE PICTURE", font("black", 60))
-    rule(d, 122, width=5)
-    rule(d, 130, width=2)
+    # masthead (slim -- the date band and hero carry the page now)
+    centered(d, W / 2, 14, "THE WORLD IN ONE PICTURE", font("black", 42))
+    rule(d, 66, width=4)
 
-    # date band
-    d.rectangle([MARGIN, 142, RIGHT, 202], fill=RED)
-    centered(d, W / 2, 152, "TUESDAY 24 NOVEMBER 2026", font("bold", 44), fill=WHITE)
+    # date band: taller than v1, date in much larger type
+    d.rectangle([MARGIN, 78, RIGHT, 178], fill=RED)
+    f_date = fit_one_line(d, "TUESDAY 24 NOVEMBER 2026", "black", 66, CW - 40, min_size=30)
+    centered(d, W / 2, 96, "TUESDAY 24 NOVEMBER 2026", f_date, fill=WHITE)
 
-    # lead story
-    d.text((MARGIN, 220), "UKRAINE WAR  •  OFF THE LIBYAN COAST", font=font("bold", 25), fill=RED_DARK)
+    # hero scene: about half the page
+    hx0, hy0, hx1, hy1 = MARGIN, 194, RIGHT, 678
+    draw_hero(img, hx0, hy0, hx1, hy1)
+    d = ImageDraw.Draw(img)
+
+    # headline over the sky, top-left, soft dark shadow for contrast
+    tx = hx0 + 26
+    d.text((tx, hy0 + 18), "UKRAINE WAR  •  OFF THE LIBYAN COAST",
+           font=font("bold", 27), fill=GOLD)
     f_head, head_lines, _ = fit_lines(
-        d, "SEA DRONES SINK RUSSIAN WARSHIP OFF LIBYA", "condbold", 62, 560, 3)
-    y = 250
+        d, "SEA DRONES SINK RUSSIAN WARSHIP", "black", 104, hx1 - tx - 330, 2, min_size=44)
+    hy = hy0 + 56
     for line in head_lines:
-        d.text((MARGIN, y), line, font=f_head, fill=INK)
-        y += int(f_head.size * 1.04)
-    f_sum = font("regular", 28)
-    summary = ("Seven unmanned boats struck the corvette Merkury near Benghazi, "
-               "destroying a Ka-27 helicopter and hitting the cargo ship MV Angara.")
-    sy = y + 8
-    for line in wrap(d, summary, f_sum, 560):
-        d.text((MARGIN, sy), line, font=f_sum, fill=INK)
-        sy += 38
-    draw_lead_panel(d, 620, 220, RIGHT, 542)
-    f_cap, cap_lines, _ = fit_lines(
-        d, "The swarm closes on the Merkury.", "italic", 21, RIGHT - 620, 1, min_size=15)
-    d.text((620, 550), cap_lines[0], font=f_cap, fill=SOFT_INK)
-    rule(d, 606, width=3)
+        d.text((tx + 3, hy + 3), line, font=f_head, fill=(20, 12, 24))
+        d.text((tx, hy), line, font=f_head, fill=WHITE)
+        hy += int(f_head.size * 1.02)
 
-    # secondary grid, two columns by three rows
-    grid_top = 622
-    row_h = 116
-    col_x = [MARGIN, 524]
-    col_w = 464
-    for i, (kicker, head, summ, icon) in enumerate(STORIES):
-        cx = col_x[i % 2]
-        cy = grid_top + (i // 2) * row_h
-        if i >= 2:
-            rule(d, cy - 6, x0=cx, x1=cx + col_w, width=1, fill=(196, 189, 172))
-        icon(d, cx, cy + 10, 84)
-        tx = cx + 102
-        tw = col_w - 102
-        d.text((tx, cy), kicker, font=font("bold", 19), fill=RED_DARK)
-        f_h, h_lines, _ = fit_lines(d, head, "condbold", 31, tw, 2, min_size=23)
-        hy = cy + 21
-        for line in h_lines:
-            d.text((tx, hy), line, font=f_h, fill=INK)
-            hy += int(f_h.size * 0.98)
-        f_s = fit_one_line(d, summ, "regular", 19, tw)
-        d.text((tx, cy + 88), summ, font=f_s, fill=SOFT_INK)
+    # one factual line along the foot of the hero, on the dark sea
+    f_cap = fit_one_line(d, CAPTION, "bold", 23, hx1 - hx0 - 52, min_size=15)
+    d.text((hx0 + 26, hy1 - 40), CAPTION, font=f_cap, fill=(238, 240, 238))
 
-    # footer ticker
-    rule(d, 970, width=3)
-    f_tick, tick_lines, _ = fit_lines(
-        d, "ALSO TODAY — Thousands evacuated from a UK concert after an unknown substance was released",
-        "bold", 22, RIGHT - MARGIN, 1, min_size=14)
-    centered(d, W / 2, 980, tick_lines[0], f_tick, fill=INK)
+    # four story tiles, 2 x 2: big icon tile + one bold title line, no body text
+    grid_top = 694
+    row_h = 122
+    gap = 12
+    col_w = (CW - gap) // 2
+    for i, (title, tint, icon) in enumerate(BLOCKS):
+        bx = MARGIN + (i % 2) * (col_w + gap)
+        by = grid_top + (i // 2) * (row_h + gap)
+        d.rectangle([bx, by, bx + col_w, by + row_h], fill=(253, 251, 245), outline=INK, width=2)
+        tile = 104
+        d.rectangle([bx + 9, by + 9, bx + 9 + tile, by + 9 + tile], fill=tint)
+        icon(d, bx + 17, by + 17, tile - 16)
+        txx = bx + 9 + tile + 18
+        tw = bx + col_w - 12 - txx
+        f_t = fit_one_line(d, title, "condbold", 37, tw, min_size=21)
+        asc, desc = f_t.getmetrics()
+        ty = by + (row_h - (asc + desc)) // 2
+        d.text((txx, ty), title, font=f_t, fill=INK)
 
-    img.save("entry.png", optimize=True)
+    # footer ticker, one line
+    rule(d, 968, width=3)
+    f_tick = fit_one_line(d, TICKER, "bold", 24, CW, min_size=13)
+    centered(d, W / 2, 978, TICKER, f_tick, fill=INK)
+
+    img.convert("RGB").save("entry.png", optimize=True)
     print("wrote entry.png")
 
 
